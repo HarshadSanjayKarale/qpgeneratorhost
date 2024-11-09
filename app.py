@@ -4,15 +4,16 @@ import os
 import tempfile
 import pandas as pd
 from werkzeug.utils import secure_filename
-from asgiref.wsgi import WsgiToAsgi
 
-# Initialize Flask app and apply CORS
 app = Flask(__name__)
 CORS(app)
 
-# Configure upload folder
 UPLOAD_FOLDER = tempfile.gettempdir()
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+@app.route('/', methods=['GET'])
+def home():
+    return "Welcome to the Question Paper Generator API!", 200
 
 @app.route('/generate', methods=['POST'])
 def generate_question_paper():
@@ -26,23 +27,18 @@ def generate_question_paper():
         return 'No selected file', 400
 
     if excel_file:
-        # Save uploaded Excel file to temp directory
         excel_filename = secure_filename(excel_file.filename)
         excel_path = os.path.join(app.config['UPLOAD_FOLDER'], excel_filename)
         excel_file.save(excel_path)
 
-        # Set output Word file path
         word_filename = secure_filename(f"{word_file}.docx")
         word_path = os.path.join(app.config['UPLOAD_FOLDER'], word_filename)
 
-        # Template for the Word file
         template_file = 'Pimpri Chinchwad Education Trust2.docx'
 
-        # Initialize variables for unitwise marks and total marks
         unitwise_marks = {}
         total_marks = 0
 
-        # Read unitwise marks from the specified Excel sheet
         general_info = pd.read_excel(excel_path, sheet_name='Question Paper - General Inform', header=None, skiprows=13)
 
         count = 0
@@ -63,11 +59,9 @@ def generate_question_paper():
                 if count >= condition:
                     break
 
-        # Difficulty level percentages
         easy_percent = 40
         medium_percent = 40
         
-        # Calculate mark ranges for easy and medium difficulty questions
         easy_range = (
             int(total_marks * (easy_percent - 5) / 100),
             int(total_marks * (easy_percent + 5) / 100)
@@ -77,21 +71,16 @@ def generate_question_paper():
             int(total_marks * (medium_percent + 5) / 100)
         )
 
-        # Import and use generate_question_paper and create_word_document_with_images functions
         from final import generate_question_paper, create_word_document_with_images
 
-        # Generate questions and create Word document
         final_questions = generate_question_paper(excel_path, unitwise_marks, easy_range, medium_range)
         if final_questions is not None:
-            create_word_document_with_images(final_questions, excel_path, word_path, template_file)
-            return send_file(word_path, as_attachment=True)
+            create_word_document_with_images(final_questions, excel_path, word_filename, template_file)
+            return send_file(word_filename, as_attachment=True)
         else:
             return 'Could not generate the question paper.', 400
 
     return 'Error processing the file', 400
-
-# Wrap the Flask app with WsgiToAsgi for ASGI compatibility
-asgi_app = WsgiToAsgi(app)
 
 if __name__ == '__main__':
     app.run(debug=True)
