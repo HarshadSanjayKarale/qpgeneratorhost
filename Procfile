@@ -1,1 +1,1 @@
-web: uvicorn app:asgi_app --host 0.0.0.0 --port 8000
+web: gunicorn app:app -w 4 --threads 4 -b 0.0.0.0:8000
