@@ -57,14 +57,14 @@ def generate_question_paper():
             return {'error': 'Template file not found'}, 500
 
         try:
-            general_info = pd.read_excel(excel_path, sheet_name='Question Paper - General Inform', header=None, skiprows=13)
+            general_info = pd.read_excel(excel_path, sheet_name='Question Paper - General Inform', header=None, skiprows=11)
         except Exception as e:
             return {'error': f'Error reading Excel file: {str(e)}'}, 400
 
         unitwise_marks = {}
         total_marks = 0
         count = 0
-        condition = 4
+        condition = 0
 
         for row in general_info.itertuples(index=False):
             try:
