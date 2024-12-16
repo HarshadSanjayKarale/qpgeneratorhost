@@ -11,6 +11,8 @@ from PIL import Image as PILImage
 import io
 import roman
 from docx.shared import Pt
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
 def load_question_bank(file_name):
     return pd.read_excel(file_name, sheet_name='Question Bank')
@@ -123,26 +125,84 @@ def convert_excel_to_word_with_images_and_equations(ws, row_number, paragraph):
         run = paragraph.add_run(question_text)
         run.font.size = Pt(11)  # Set font size for remaining text
 
+def roman_to_int(roman):
+    """Convert a Roman numeral to an integer."""
+    roman_map = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
+    value = 0
+    prev_value = 0
+    for char in reversed(roman):
+        current_value = roman_map.get(char, 0)
+        if current_value < prev_value:
+            value -= current_value
+        else:
+            value += current_value
+        prev_value = current_value
+    return value
+
+def preprocess_placeholders_for_paragraphs(placeholders):
+    """Create a modified placeholders dictionary for paragraphs."""
+    updated_placeholders = placeholders.copy()
+    if 'Semester' in updated_placeholders:
+        roman_value = str(updated_placeholders['Semester']).strip()  # Extract the Roman numeral
+        int_value = roman_to_int(roman_value)
+        updated_placeholders['Semester'] = "Odd" if int_value % 2 != 0 else "Even"
+    return updated_placeholders
+
 def replace_placeholders_in_template(doc, question_bank, font_size):
+    # Load general information from the Excel sheet
     sheet_name = "Question Paper - General Inform"
     general_info = pd.read_excel(question_bank, sheet_name=sheet_name, header=None)
     placeholders = dict(zip(general_info[0], general_info[1]))
-
+    
+    # Create a modified placeholders dictionary for paragraphs
+    paragraph_placeholders = preprocess_placeholders_for_paragraphs(placeholders)
+    
+    # Replace placeholders in paragraphs
     for para in doc.paragraphs:
-        for key, value in placeholders.items():
+        for key, value in paragraph_placeholders.items():
             placeholder = f"{{{{{key}}}}}"
             if placeholder in para.text:
-                # Replace the placeholder text
                 para.text = para.text.replace(placeholder, str(value))
-                
-                # Set the font size for the entire paragraph
                 for run in para.runs:
-                    if key == 'Total Time' or key == 'Total Credits' or key == 'General Instructions':
+                    if key in ['Total Time', 'Total Marks']:
+                        run.font.size = Pt(13)
+                        run.font.bold = True
+                        run.font.italic = True
+                    elif key == 'General Instructions':
                         run.font.size = Pt(12)
+                        run.font.bold = True
+                    elif key == 'Semester':
+                        run.font.size = Pt(12)
+                        run.font.bold = True
                     else:
                         run.font.size = Pt(font_size)
                         run.font.bold = True
                     run.font.name = 'Times New Roman'
+    
+    # Replace placeholders in tables (use original placeholders)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    for key, value in placeholders.items():  # Use original placeholders
+                        placeholder = f"{{{{{key}}}}}"
+                        if placeholder in para.text:
+                            para.text = para.text.replace(placeholder, str(value))
+                            for run in para.runs:
+                                run.font.size = Pt(12)
+                                run.font.name = 'Times New Roman'
+    
+    # Replace placeholders in headers (use paragraph placeholders)
+    for section in doc.sections:
+        header = section.header
+        for para in header.paragraphs:
+            for key, value in paragraph_placeholders.items():
+                placeholder = f"{{{{{key}}}}}"
+                if placeholder in para.text:
+                    para.text = para.text.replace(placeholder, str(value))
+                    for run in para.runs:
+                        run.font.size = Pt(12)
+                        run.font.name = 'Times New Roman'
                 
 
 def apply_table_styles(table):
@@ -155,7 +215,7 @@ def apply_table_styles(table):
         cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = cell.paragraphs[0].runs[0]
         run.font.bold = True
-        run.font.size = Pt(11)
+        run.font.size = Pt(13)
 
     # Style data rows
     for row in table.rows[1:]:
@@ -191,17 +251,37 @@ def get_column_widths(table):
             widths.append(Inches(1))
     return widths
 
+# def set_column_widths(table, widths):
+#     """
+#     Set the widths of columns in a table.
+    
+#     Args:
+#         table: A docx table object
+#         widths (list): List of column widths to set
+#     """
+#     for i, width in enumerate(widths):
+#         for row in table.rows:
+#             row.cells[i].width = width+1
+
+
 def set_column_widths(table, widths):
     """
     Set the widths of columns in a table.
     
     Args:
         table: A docx table object
-        widths (list): List of column widths to set
+        widths (list): List of column widths in inches
     """
     for i, width in enumerate(widths):
         for row in table.rows:
-            row.cells[i].width = width+1
+            cell = row.cells[i]
+            # Access the XML element for the cell width
+            tc = cell._tc
+            tcPr = tc.get_or_add_tcPr()
+            tcW = OxmlElement('w:tcW')
+            tcW.set(qn('w:type'), 'dxa')
+            tcW.set(qn('w:w'), str(int(width * 1440)))  # Inches to Twips (1 inch = 1460 twips)
+            tcPr.append(tcW)
 
 def create_word_document_with_images(final_questions, excel_file, word_file, template_file):
     wb = openpyxl.load_workbook(excel_file)
