@@ -331,6 +331,8 @@ def login():
     
     valid_username = os.getenv('LOGIN_USERNAME')
     valid_password = os.getenv('LOGIN_PASSWORD')
+    print(username, password)
+    print(valid_username, valid_password)
     
     if username == valid_username and password == valid_password:
         otp = generate_otp()
