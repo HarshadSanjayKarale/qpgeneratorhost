@@ -37,6 +37,7 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'RAILWAY_TOKEN')  # Add this to your .env file
+
 TOKEN_EXPIRATION = 1 
 
 def generate_token(user_id):
@@ -331,6 +332,8 @@ def login():
     
     valid_username = os.getenv('LOGIN_USERNAME')
     valid_password = os.getenv('LOGIN_PASSWORD')
+    print(username, password)
+    print(valid_username, valid_password)
     
     if username == valid_username and password == valid_password:
         otp = generate_otp()
