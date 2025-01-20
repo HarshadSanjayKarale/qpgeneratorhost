@@ -40,21 +40,44 @@ SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'RAILWAY_TOKEN')  # Add this to your .e
 
 TOKEN_EXPIRATION = 1 
 
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 def generate_token(user_id):
-    """Generate a JWT token with 20-minute expiration"""
+    """Generate a JWT token with proper error handling"""
     try:
+        # Validate inputs
+        if not user_id:
+            logger.error("Invalid user_id provided for token generation")
+            return None
+            
+        # Ensure SECRET_KEY is available
+        if not SECRET_KEY:
+            logger.error("JWT_SECRET_KEY not properly configured")
+            return None
+            
         payload = {
             'exp': datetime.utcnow() + timedelta(minutes=TOKEN_EXPIRATION),
             'iat': datetime.utcnow(),
             'sub': user_id
         }
-        return jwt.encode(
+        
+        token = jwt.encode(
             payload,
             SECRET_KEY,
             algorithm='HS256'
         )
+        
+        # Log successful token generation
+        logger.info(f"Successfully generated token for user: {user_id}")
+        return token
+        
     except Exception as e:
+        logger.error(f"Token generation failed: {str(e)}")
         return None
+    
 
 def verify_token(token):
     """Verify the JWT token"""
@@ -370,30 +393,46 @@ def login():
 
 @app.route('/api/verify-otp', methods=['POST'])
 def verify():
-    data = request.get_json()
-    username = data.get('username')
-    otp = data.get('otp')
-    
-    if verify_otp(username, otp):
-        token = generate_token(username)
-        print(f"**************************Token: {token}")
-        if not token:
+    try:
+        data = request.get_json()
+        username = data.get('username')
+        otp = data.get('otp')
+        
+        if not username or not otp:
             return jsonify({
                 'status': 'error',
-                'message': 'Failed to generate token'
-            }), 500
-        else:
+                'message': 'Username and OTP are required'
+            }), 400
+        
+        if verify_otp(username, otp):
+            token = generate_token(username)
+            logger.info(f"Generated token status: {'Success' if token else 'Failed'}")
+            
+            if not token:
+                logger.error("Token generation failed")
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Failed to generate authentication token'
+                }), 500
+                
             return jsonify({
                 'status': 'success',
                 'message': 'OTP verified successfully',
                 'token': token,
-                'expires_in': TOKEN_EXPIRATION * 60 
+                'expires_in': TOKEN_EXPIRATION * 60
             })
-    
-    return jsonify({
-        'status': 'error',
-        'message': 'Invalid or expired OTP'
-    }), 401
+        
+        return jsonify({
+            'status': 'error',
+            'message': 'Invalid or expired OTP'
+        }), 401
+        
+    except Exception as e:
+        logger.error(f"OTP verification failed: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Internal server error during authentication'
+        }), 500
 
 
 # MongoDB Atlas connection setup
