@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file
+from flask import Flask, request, send_file, make_response, Blueprint
 from flask_cors import CORS
 import os
 import tempfile
@@ -8,6 +8,24 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from starlette.middleware.wsgi import WSGIMiddleware
 import zipfile
 import io
+from flask import Flask, request, jsonify
+from dotenv import load_dotenv
+import random
+import string
+from datetime import datetime, timedelta
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from pymongo import MongoClient
+import jwt
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+import json
+from bson import json_util
+
+
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -18,6 +36,73 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'your-secret-key')  # Add this to your .env file
+TOKEN_EXPIRATION = 1 
+
+def generate_token(user_id):
+    """Generate a JWT token with 20-minute expiration"""
+    try:
+        payload = {
+            'exp': datetime.utcnow() + timedelta(minutes=TOKEN_EXPIRATION),
+            'iat': datetime.utcnow(),
+            'sub': user_id
+        }
+        return jwt.encode(
+            payload,
+            SECRET_KEY,
+            algorithm='HS256'
+        )
+    except Exception as e:
+        return None
+
+def verify_token(token):
+    """Verify the JWT token"""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        return payload['sub']
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+def verify_token(token):
+    """Verify the JWT token"""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        return payload['sub']
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+def token_required(f):
+    """Decorator to protect routes with JWT token verification"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        
+        # Get token from header
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            try:
+                token = auth_header.split(" ")[1]  # Bearer <token>
+            except IndexError:
+                return jsonify({'message': 'Invalid token format'}), 401
+        
+        if not token:
+            return jsonify({'message': 'Token is missing'}), 401
+        
+        # Verify token
+        user_id = verify_token(token)
+        if not user_id:
+            return jsonify({'message': 'Token is invalid or expired'}), 401
+        
+        
+        return f(*args, **kwargs)
+    
+    return decorated
+
+
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'xlsx', 'xls'}
@@ -27,10 +112,15 @@ def home():
     return "Welcome to the Question Paper Generator API!", 200
 
 @app.route('/generate', methods=['POST'])
+@token_required
 def generate_question_paper_app():
+    response_status = None
+    error_message = None
     try:
         if 'excel_file' not in request.files:
-            return {'error': 'No file part'}, 400
+            response_status = 400
+            error_message = 'No file part'
+            return {'error': error_message}, response_status
         
         excel_file = request.files['excel_file']
         word_file = request.form.get('word_file')
@@ -137,6 +227,12 @@ def generate_question_paper_app():
                 as_attachment=True,
                 download_name=f'QuestionPaper_Set{set_number}.zip'
             )
+            response_status = 200
+            log_api_request(
+                endpoint='/generate',
+                request_data={'set_number': set_number, 'filename': excel_filename},
+                response_status=response_status
+            )
             
             response.headers['Access-Control-Allow-Origin'] = '*'
             return response
@@ -160,10 +256,254 @@ def generate_question_paper_app():
             print(f"Error cleaning up files: {str(e)}")
             pass
 
+# Define and register the auth blueprint
+auth_bp = Blueprint('auth', __name__)
+app.register_blueprint(auth_bp)
+
 asgi_app = WSGIMiddleware(app)
+
+
+
+# Store OTPs with expiration
+otp_store = {}
+
+def generate_otp():
+    """Generate a 6-digit OTP"""
+    return ''.join(random.choices(string.digits, k=6))
+
+def send_otp_email(otp):
+    """Send OTP via email"""
+    sender_email = os.getenv('EMAIL_ADDRESS')
+    sender_password = os.getenv('EMAIL_PASSWORD')
+    receiver_email = "harshad.karale22@pccoepune.org"
+
+    message = MIMEMultipart()
+    message["From"] = sender_email
+    message["To"] = receiver_email
+    message["Subject"] = "Login OTP Verification"
+
+    body = f"""
+    Dear User,
+
+    Your OTP for login verification is: {otp}
+
+    This OTP will expire in 5 minutes.
+
+    Best regards,
+    PCCOE Exam System
+    """
+
+    message.attach(MIMEText(body, "plain"))
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender_email, sender_password)
+            server.send_message(message)
+        return True
+    except Exception as e:
+        print(f"Error sending email: {e}")
+        return False
+
+def store_otp(username, otp):
+    """Store OTP with 5-minute expiration"""
+    otp_store[username] = {
+        'otp': otp,
+        'expires_at': datetime.now() + timedelta(minutes=5)
+    }
+
+def verify_otp(username, otp):
+    """Verify OTP and check expiration"""
+    if username in otp_store:
+        stored_data = otp_store[username]
+        if datetime.now() <= stored_data['expires_at'] and stored_data['otp'] == otp:
+            del otp_store[username]  # Remove used OTP
+            return True
+    return False
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    response_status = None
+    error_message = None
+    print("Given call to /api/login")
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    
+    valid_username = os.getenv('LOGIN_USERNAME')
+    valid_password = os.getenv('LOGIN_PASSWORD')
+    
+    if username == valid_username and password == valid_password:
+        otp = generate_otp()
+        if send_otp_email(otp):
+            store_otp(username, otp)
+            response_status = 200
+            log_api_request(
+                endpoint='/api/login',
+                request_data={'username': username},
+                response_status=response_status
+            )
+            return jsonify({
+                'status': 'success',
+                'message': 'OTP has been sent to your email'
+            })
+        else:
+            response_status = 500
+            error_message = 'Failed to send OTP email'
+            log_api_request(
+                endpoint='/api/login',
+                request_data={'username': username},
+                response_status=response_status,
+                error=error_message
+            )
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to send OTP email'
+            }), 500
+    
+    return jsonify({
+        'status': 'error',
+        'message': 'Invalid credentials'
+    }), 401
+
+@app.route('/api/verify-otp', methods=['POST'])
+def verify():
+    data = request.get_json()
+    username = data.get('username')
+    otp = data.get('otp')
+    
+    if verify_otp(username, otp):
+        token = generate_token(username)
+        print(f"**************************Token: {token}")
+        if not token:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to generate token'
+            }), 500
+        else:
+            return jsonify({
+                'status': 'success',
+                'message': 'OTP verified successfully',
+                'token': token,
+                'expires_in': TOKEN_EXPIRATION * 60 
+            })
+    
+    return jsonify({
+        'status': 'error',
+        'message': 'Invalid or expired OTP'
+    }), 401
+
+
+# MongoDB Atlas connection setup
+MONGO_URI = os.getenv('MONGO_URI')  # Add this to your .env file
+client = MongoClient(MONGO_URI)
+db = client['api_logs']  # Database name
+logs_collection = db['endpoint_logs']  # Collection name
+
+def log_api_request(endpoint, request_data=None, response_status=None, error=None):
+    """
+    Log API requests to MongoDB Atlas
+    
+    Parameters:
+    - endpoint: str - The API endpoint that was accessed
+    - request_data: dict - Request data (optional)
+    - response_status: int - HTTP response status code
+    - error: str - Error message if any
+    """
+    try:
+        log_entry = {
+            'timestamp': datetime.utcnow(),
+            'endpoint': endpoint,
+            'method': request.method,
+            'ip_address': request.remote_addr,
+            'user_agent': request.headers.get('User-Agent'),
+            'request_data': request_data,
+            'response_status': response_status,
+            'error': error
+        }
+        
+        logs_collection.insert_one(log_entry)
+        
+    except Exception as e:
+        print(f"Error logging to MongoDB: {str(e)}")
+
+@app.route('/api/logs', methods=['GET'])
+def get_logs():
+    try:
+        # Fetch logs from MongoDB, sorted by timestamp in descending order
+        logs = logs_collection.find().sort('timestamp', -1).limit(100)
+        
+        # Convert MongoDB cursor to list and handle ObjectId serialization
+        logs_list = json.loads(json_util.dumps(logs))
+        
+        return jsonify({
+            'status': 'success',
+            'data': logs_list
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+    
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    try:
+        # Get token from header
+        auth_header = request.headers.get('Authorization')
+        
+        if not auth_header:
+            return jsonify({
+                'status': 'error',
+                'message': 'No authorization token provided'
+            }), 401
+
+        # Extract token
+        try:
+            token = auth_header.split(" ")[1]
+        except IndexError:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid token format'
+            }), 401
+
+        # Verify token
+        user_id = verify_token(token)
+        if not user_id:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid or expired token'
+            }), 401
+
+        # Log successful logout
+        log_api_request(
+            endpoint='/api/logout',
+            request_data={'user_id': user_id},
+            response_status=200
+        )
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Successfully logged out'
+        }), 200
+        
+    except Exception as e:
+        # Log error
+        log_api_request(
+            endpoint='/api/logout',
+            response_status=500,
+            error=str(e)
+        )
+        
+        return jsonify({
+            'status': 'error',
+            'message': f'Logout failed: {str(e)}'
+        }), 500
+
 
 def create_app():
     return asgi_app
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8000))
