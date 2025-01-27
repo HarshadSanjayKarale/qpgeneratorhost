@@ -308,14 +308,14 @@ def send_otp_email(otp):
     message["Subject"] = "Login OTP Verification"
 
     # Add logo
-    logo_path = "C:/Users/sachi/OneDrive/Desktop/Question Paper Generator/ExamEngine/Backend/images/Teamaansh1.jpeg"
+    logo_path = os.path.join(os.path.dirname(__file__), 'images', 'Teamaansh1.jpeg')
     
     with open(logo_path, 'rb') as logo_file:
         logo = MIMEImage(logo_file.read())
         logo.add_header('Content-ID', '<logo>')
         message.attach(logo)
     # Add logo
-    system_logo = "C:/Users/sachi/OneDrive/Desktop/Question Paper Generator/ExamEngine/Backend/images/PRASHNAANSH.jpg"
+    system_logo = os.path.join(os.path.dirname(__file__), 'images', 'PRASHNAANSH.jpg')
     
     with open(system_logo, 'rb') as logo_file:
         system_logo = MIMEImage(logo_file.read())
