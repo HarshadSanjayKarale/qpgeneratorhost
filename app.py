@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.image import MIMEImage
 from pymongo import MongoClient
 import jwt
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -306,18 +307,37 @@ def send_otp_email(otp):
     message["To"] = receiver_email
     message["Subject"] = "Login OTP Verification"
 
+    # Add logo
+    logo_path = "C:/Users/sachi/OneDrive/Desktop/Question Paper Generator/ExamEngine/Backend/images/Teamaansh1.jpeg"
+    
+    with open(logo_path, 'rb') as logo_file:
+        logo = MIMEImage(logo_file.read())
+        logo.add_header('Content-ID', '<logo>')
+        message.attach(logo)
+    # Add logo
+    system_logo = "C:/Users/sachi/OneDrive/Desktop/Question Paper Generator/ExamEngine/Backend/images/PRASHNAANSH.jpg"
+    
+    with open(system_logo, 'rb') as logo_file:
+        system_logo = MIMEImage(logo_file.read())
+        system_logo.add_header('Content-ID', '<system_logo>')
+        message.attach(system_logo)
+
     body = f"""
-    Dear User,
-
-    Your OTP for login verification is: {otp}
-
-    This OTP will expire in 5 minutes.
-
-    Best regards,
-    PCCOE Exam System
+    <html>
+    <body>
+    <p><img src="cid:system_logo" alt="PRASHNAANSH" style="width:100%;heigh:100px;align:center"></p>
+    <p>Dear User,</p>
+    <p>We're excited to have you on board with <b>PRASHNAANSH</b>. To securely access your account, please use the following one-time password (OTP):</p>
+    <p><b>OTP: {otp}</b></p>
+    <p>This OTP will expire in 5 minutes. For any questions or assistance, our team is here to help.</p>
+    <p>Sincerely,<br>
+    Team AANSH</p>
+    <p><img src="cid:logo" alt="Team AANSH" style="width:100%;heigh:100px;align:center"></p>
+    </body>
+    </html>
     """
 
-    message.attach(MIMEText(body, "plain"))
+    message.attach(MIMEText(body, "html"))
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
